@@ -15,7 +15,7 @@
 
 ## Играть онлайн (GitHub Pages)
 
-Откройте в браузере: https://USERNAME.github.io/fox-hunter/
+Откройте в браузере: https://it-ul.github.io/fox-hunter/
 
 ## Локальный запуск Flask-версии
 
