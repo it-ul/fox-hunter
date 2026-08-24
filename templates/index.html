@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>🦊 Охота на лис</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: linear-gradient(135deg, #2e5d3a, #1b3a2a);
+      color: #f5f0e1;
+      min-height: 100vh;
+    }
+    .container { max-width: 900px; margin: 0 auto; padding: 24px; text-align: center; }
+    h1 { letter-spacing: 2px; }
+
+    .card {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      padding: 24px;
+      margin: 16px auto;
+      max-width: 640px;
+    }
+    .rules { text-align: left; font-size: 14px; line-height: 1.6; }
+    .rules li { margin: 6px 0; }
+
+    label { display: block; margin: 12px 0; font-size: 15px; }
+    select, button {
+      font-size: 15px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: none;
+      margin: 4px;
+    }
+    button {
+      background: #e8a33d;
+      color: #3a2a0a;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform .1s;
+    }
+    button:hover { transform: scale(1.04); }
+    .hint { font-size: 13px; opacity: .8; }
+
+    .stats { font-size: 16px; margin: 12px 0; }
+
+    /* Поле */
+    .board { border-collapse: collapse; margin: 12px auto; }
+    .board td { padding: 0; }
+    .cell {
+      width: 46px; height: 46px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 18px;
+      border-radius: 6px; margin: 2px;
+      border: none;
+    }
+    .cell.small {           /* для поля 15x15 */
+      width: 26px; height: 26px;
+      font-size: 12px; margin: 1px; border-radius: 3px;
+    }
+    .cell.hidden {
+      background: #6b4f2a;
+      box-shadow: inset 0 0 0 1px #8a6a3f;
+      cursor: pointer;
+    }
+    .cell.hidden:hover { background: #8a6a3f; }
+    .cell.number { background: #f5f0e1; color: #2b4d33; box-shadow: inset 0 0 0 1px #ccc; }
+    .cell.number.grey-line { background: #d9d9d9; color: #555; }
+    .cell.hidden.grey-line { background: #a3a3a3; box-shadow: inset 0 0 0 1px #8d8d8d; }
+    .cell.hidden.grey-line:hover { background: #b5b5b5; }
+    .cell.fox { background: #fff; font-size: 26px; }
+    .cell.fox.small { font-size: 16px; }
+
+    .message { padding: 14px; border-radius: 10px; font-size: 18px; margin: 12px auto; max-width: 560px; }
+    .message.win { background: #2f9e44; color: #fff; }
+    .message.lose { background: #c92a2a; color: #fff; }
+    .btn-row { margin: 10px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>🦊 Охота на лис</h1>
+
+  {% if game is none %}
+    <!-- ================= СТАРТОВОЕ МЕНЮ ================= -->
+    <div class="card">
+      <h2>Новая игра</h2>
+      <form method="post" action="{{ url_for('start') }}">
+        <label>Размер поля
+          <select name="size" id="size">
+            {% for s in field_sizes %}
+              <option value="{{ s }}" {% if s == 9 %}selected{% endif %}>{{ s }}×{{ s }}</option>
+            {% endfor %}
+          </select>
+        </label>
+        <label>Количество лис (сложность)
+          <select name="foxes" id="foxes"></select>
+        </label>
+        <p class="hint">Лимит ходов: {{ max_moves }}. Чем больше лис — тем сложнее игра.</p>
+        <button type="submit">Начать игру</button>
+      </form>
+    </div>
+
+    <div class="card rules">
+      <h3>Правила</h3>
+      <ul>
+        <li>Лисы спрятаны на поле. Кликайте по клеткам, чтобы найти их.</li>
+        <li>В открытой клетке показывается <b>пеленг</b> — сколько лис стоит
+            на той же вертикали, горизонтали и обеих диагоналях.</li>
+        <li>Попадание в клетку с лисой отмечает её как найденную.</li>
+        <li>На игру даётся {{ max_moves }} ходов.</li>
+      </ul>
+    </div>
+
+    <script>
+      // Динамически обновляем список количества лис при смене размера поля
+      const defaultFoxes = {{ default_foxes | tojson }};
+      const sizeSelect = document.getElementById('size');
+      const foxesSelect = document.getElementById('foxes');
+
+      function updateFoxes() {
+        const size = parseInt(sizeSelect.value, 10);
+        const chosen = Math.min(defaultFoxes[size] || 5, size);
+        foxesSelect.innerHTML = '';
+        for (let n = 5; n <= size; n++) {
+          const opt = document.createElement('option');
+          opt.value = n;
+          opt.textContent = n + (n === chosen ? ' (по умолчанию)' : '');
+          if (n === chosen) opt.selected = true;
+          foxesSelect.appendChild(opt);
+        }
+      }
+      sizeSelect.addEventListener('change', updateFoxes);
+      updateFoxes();
+    </script>
+
+  {% elif game.status == 'playing' %}
+    <!-- ================= ИГРОВОЕ ПОЛЕ ================= -->
+    <div class="stats">
+      Ходы: {{ game.moves }} / {{ max_moves }}
+      &nbsp;•&nbsp;
+      Лисы найдены: {{ game.found }} / {{ game.foxes|length }}
+    </div>
+
+    <table class="board">
+      {% for r in range(game.size) %}
+        <tr>
+          {% for c in range(game.size) %}
+            {% set key = r ~ ',' ~ c %}
+            {% set zl = grey_lines and (r in grey_lines.rows or c in grey_lines.cols
+                      or (r - c) in grey_lines.diag_main or (r + c) in grey_lines.diag_anti) %}
+            <td>
+              {% if key in game.revealed %}
+                {# Клетка уже открыта: лиса или число-пеленг #}
+                {% if key in game.found_cells %}
+                  <div class="cell fox {{ 'small' if game.size == 15 }}">🦊</div>
+                {% else %}
+                  <div class="cell number {{ 'grey-line' if zl }} {{ 'small' if game.size == 15 }}">{{ game.revealed[key] }}</div>
+                {% endif %}
+              {% else %}
+                {# Закрытая клетка — кнопка-ход #}
+                <form method="post" action="{{ url_for('move') }}">
+                  <input type="hidden" name="row" value="{{ r }}">
+                  <input type="hidden" name="col" value="{{ c }}">
+                  <button type="submit" class="cell hidden {{ 'grey-line' if zl }} {{ 'small' if game.size == 15 }}"></button>
+                </form>
+              {% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </table>
+
+    <div class="btn-row">
+      <form method="post" action="{{ url_for('exit') }}" style="display:inline">
+        <button type="submit">Выход</button>
+      </form>
+    </div>
+
+  {% else %}
+    <!-- ================= КОНЕЦ ИГРЫ ================= -->
+    <div class="message {{ game.status }}">{{ game.message }}</div>
+    <p class="hint">Поле очищено. Можно начать новую игру.</p>
+    <div class="btn-row">
+      <form method="post" action="{{ url_for('exit') }}" style="display:inline">
+        <button type="submit">В начало</button>
+      </form>
+    </div>
+  {% endif %}
+</div>
+</body>
+</html>

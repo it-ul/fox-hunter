@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>🦊 Охота на лис</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: linear-gradient(135deg, #2e5d3a, #1b3a2a);
+      color: #f5f0e1;
+      min-height: 100vh;
+    }
+    .container { max-width: 900px; margin: 0 auto; padding: 24px; text-align: center; }
+    h1 { letter-spacing: 2px; }
+
+    .card {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      padding: 24px;
+      margin: 16px auto;
+      max-width: 640px;
+    }
+    .rules { text-align: left; font-size: 14px; line-height: 1.6; }
+    .rules li { margin: 6px 0; }
+
+    label { display: block; margin: 12px 0; font-size: 15px; }
+    select, button {
+      font-size: 15px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      border: none;
+      margin: 4px;
+    }
+    button {
+      background: #e8a33d;
+      color: #3a2a0a;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform .1s;
+    }
+    button:hover { transform: scale(1.04); }
+    .hint { font-size: 13px; opacity: .8; }
+
+    .stats { font-size: 16px; margin: 12px 0; }
+
+    /* Поле */
+    .board { border-collapse: collapse; margin: 12px auto; }
+    .board td { padding: 0; }
+    .cell {
+      width: 46px; height: 46px;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 700; font-size: 18px;
+      border-radius: 6px; margin: 2px;
+      border: none;
+    }
+    .cell.small {           /* для поля 15x15 */
+      width: 26px; height: 26px;
+      font-size: 12px; margin: 1px; border-radius: 3px;
+    }
+    .cell.hidden {
+      background: #6b4f2a;
+      box-shadow: inset 0 0 0 1px #8a6a3f;
+      cursor: pointer;
+    }
+    .cell.hidden:hover { background: #8a6a3f; }
+    .cell.number { background: #f5f0e1; color: #2b4d33; box-shadow: inset 0 0 0 1px #ccc; }
+    .cell.number.grey-line { background: #d9d9d9; color: #555; }
+    .cell.hidden.grey-line { background: #a3a3a3; box-shadow: inset 0 0 0 1px #8d8d8d; }
+    .cell.hidden.grey-line:hover { background: #b5b5b5; }
+    .cell.fox { background: #fff; font-size: 26px; }
+    .cell.fox.small { font-size: 16px; }
+
+    .message { padding: 14px; border-radius: 10px; font-size: 18px; margin: 12px auto; max-width: 560px; }
+    .message.win { background: #2f9e44; color: #fff; }
+    .message.lose { background: #c92a2a; color: #fff; }
+    .btn-row { margin: 10px; }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>🦊 Охота на лис</h1>
+  <div id="app"></div>
+</div>
+
+<script>
+"use strict";
+
+const FIELD_SIZES = [8, 9, 10, 15];
+const DEFAULT_FOXES = { 8: 5, 9: 5, 10: 5, 15: 10 };
+const MAX_MOVES = 100;
+
+let game = null;
+
+function newGame(size, foxesCount) {
+  const all = [];
+  for (let r = 0; r < size; r++) {
+    for (let c = 0; c < size; c++) all.push([r, c]);
+  }
+  // Перемешиваем (Fisher–Yates) и берём первых foxesCount клеток
+  for (let i = all.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [all[i], all[j]] = [all[j], all[i]];
+  }
+  const foxes = all.slice(0, foxesCount);
+  game = {
+    size: size,
+    foxes: foxes,
+    moves: 0,
+    found: 0,
+    revealed: {},      // "r,c" -> пеленг
+    foundCells: new Set(),
+    status: "playing", // playing | win | lose
+    message: null,
+  };
+  render();
+}
+
+function bearing(r, c) {
+  let b = 0;
+  for (const [fr, fc] of game.foxes) {
+    if (fr === r || fc === c || fr - fc === r - c || fr + fc === r + c) b++;
+  }
+  return b;
+}
+
+function move(r, c) {
+  if (!game || game.status !== "playing") return;
+  const key = r + "," + c;
+  if (game.revealed[key] !== undefined) return; // уже открыта
+
+  const b = bearing(r, c);
+  game.revealed[key] = b;
+  game.moves++;
+
+  if (game.foxes.some(([fr, fc]) => fr === r && fc === c)) {
+    game.foundCells.add(key);
+    game.found++;
+  }
+
+  if (game.found === game.foxes.length) {
+    game.status = "win";
+    game.message = "Поздравляем! Все " + game.found + " лис найдены за " + game.moves + " ходов.";
+  } else if (game.moves >= MAX_MOVES) {
+    game.status = "lose";
+    game.message = "Лимит ходов (" + MAX_MOVES + ") исчерпан. Найдено " + game.found + " из " + game.foxes.length + " лис.";
+  }
+  render();
+}
+
+function greyLines() {
+  const rows = new Set(), cols = new Set(), d1 = new Set(), d2 = new Set();
+  for (const [key, b] of Object.entries(game.revealed)) {
+    if (b === 0) {
+      const [r, c] = key.split(",").map(Number);
+      rows.add(r);
+      cols.add(c);
+      d1.add(r - c); // диагональ "\"
+      d2.add(r + c); // диагональ "/"
+    }
+  }
+  return { rows: rows, cols: cols, d1: d1, d2: d2 };
+}
+
+function isOnGreyLine(r, c, gl) {
+  return gl.rows.has(r) || gl.cols.has(c) || gl.d1.has(r - c) || gl.d2.has(r + c);
+}
+
+function render() {
+  const app = document.getElementById("app");
+  if (!game) { renderMenu(app); return; }
+  if (game.status === "playing") { renderBoard(app); return; }
+  renderEnd(app);
+}
+
+function renderMenu(app) {
+  let html = '<div class="card"><h2>Новая игра</h2>';
+  html += '<label>Размер поля <select id="size">';
+  for (const s of FIELD_SIZES) {
+    html += '<option value="' + s + '"' + (s === 9 ? " selected" : "") + ">" + s + "×" + s + "</option>";
+  }
+  html += "</select></label>";
+  html += '<label>Количество лис (сложность) <select id="foxes"></select></label>';
+  html += '<p class="hint">Лимит ходов: ' + MAX_MOVES + ". Чем больше лис — тем сложнее игра.</p>";
+  html += '<button id="start">Начать игру</button></div>';
+
+  html += '<div class="card rules"><h3>Правила</h3><ul>'
+    + "<li>Лисы спрятаны на поле. Кликайте по клеткам, чтобы найти их.</li>"
+    + "<li>В открытой клетке показывается <b>пеленг</b> — сколько лис стоит на той же вертикали, горизонтали и обеих диагоналях.</li>"
+    + "<li>Пеленг 0 закрашивает серым всю вертикаль, горизонталь и обе диагонали — там лис нет.</li>"
+    + "<li>На игру даётся " + MAX_MOVES + " ходов.</li></ul></div>";
+
+  app.innerHTML = html;
+
+  const sizeSelect = document.getElementById("size");
+  const foxesSelect = document.getElementById("foxes");
+  const updateFoxes = () => {
+    const size = parseInt(sizeSelect.value, 10);
+    const chosen = Math.min(DEFAULT_FOXES[size] || 5, size);
+    foxesSelect.innerHTML = "";
+    for (let n = 5; n <= size; n++) {
+      const opt = document.createElement("option");
+      opt.value = n;
+      opt.textContent = n + (n === chosen ? " (по умолчанию)" : "");
+      if (n === chosen) opt.selected = true;
+      foxesSelect.appendChild(opt);
+    }
+  };
+  sizeSelect.addEventListener("change", updateFoxes);
+  updateFoxes();
+
+  document.getElementById("start").addEventListener("click", () => {
+    newGame(parseInt(sizeSelect.value, 10), parseInt(foxesSelect.value, 10));
+  });
+}
+
+function renderBoard(app) {
+  const gl = greyLines();
+  const small = game.size === 15;
+
+  let html = '<div class="stats">Ходы: ' + game.moves + " / " + MAX_MOVES
+    + "&nbsp;•&nbsp;Лисы найдены: " + game.found + " / " + game.foxes.length + "</div>";
+
+  html += '<table class="board">';
+  for (let r = 0; r < game.size; r++) {
+    html += "<tr>";
+    for (let c = 0; c < game.size; c++) {
+      const key = r + "," + c;
+      const grey = isOnGreyLine(r, c, gl) ? " grey-line" : "";
+      if (game.revealed[key] !== undefined) {
+        if (game.foundCells.has(key)) {
+          html += '<td><div class="cell fox' + (small ? " small" : "") + '">🦊</div></td>';
+        } else {
+          html += '<td><div class="cell number' + grey + (small ? " small" : "") + '">' + game.revealed[key] + "</div></td>";
+        }
+      } else {
+        html += '<td><button type="button" class="cell hidden' + grey + (small ? " small" : "")
+          + '" onclick="move(' + r + "," + c + ')"></button></td>';
+      }
+    }
+    html += "</tr>";
+  }
+  html += "</table>";
+
+  html += '<div class="btn-row"><button onclick="exitGame()">Выход</button></div>';
+  app.innerHTML = html;
+}
+
+function renderEnd(app) {
+  let html = '<div class="message ' + game.status + '">' + game.message + "</div>";
+  html += '<p class="hint">Поле очищено. Можно начать новую игру.</p>';
+  html += '<div class="btn-row"><button onclick="exitGame()">В начало</button></div>';
+  app.innerHTML = html;
+}
+
+function exitGame() {
+  game = null;
+  render();
+}
+
+render();
+</script>
+</body>
+</html>
