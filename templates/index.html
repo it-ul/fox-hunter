@@ -89,8 +89,33 @@
     .cell.number.grey-line { background: #d9d9d9; color: #555; }
     .cell.hidden.grey-line { background: #a3a3a3; box-shadow: inset 0 0 0 1px #8d8d8d; }
     .cell.hidden.grey-line:hover { background: #b5b5b5; }
-    .cell.fox { background: #fff; font-size: 26px; }
-    .cell.fox.small { font-size: 16px; }
+    .cell.fox {
+      position: relative;
+      background: #fff3d6;
+      box-shadow: inset 0 0 0 1px #d98f2b;
+      overflow: hidden;
+    }
+    /* Лиса — «фон» клетки, цифра пеленга — поверх неё */
+    .cell.fox .fox-art {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 34px;
+      opacity: .8;
+      pointer-events: none;
+    }
+    .cell.fox .fox-bearing {
+      position: relative;
+      font-weight: 800;
+      font-size: 17px;
+      color: #5a2d00;
+      line-height: 1;
+      text-shadow: 0 0 3px #fff, 0 0 3px #fff, 0 0 4px #fff;
+    }
+    .cell.fox.small .fox-art { font-size: 20px; }
+    .cell.fox.small .fox-bearing { font-size: 11px; }
 
     .message { padding: 14px; border-radius: 10px; font-size: 18px; margin: 12px auto; max-width: 560px; }
     .message.win { background: #2f9e44; color: #fff; }
@@ -197,9 +222,12 @@
                       or (r - c) in grey_lines.diag_main or (r + c) in grey_lines.diag_anti) %}
             <td>
               {% if key in game.revealed %}
-                {# Клетка уже открыта: лиса или число-пеленг #}
+                {# Клетка уже открыта: лиса (фон) с пеленгом или число-пеленг #}
                 {% if key in game.found_cells %}
-                  <div class="cell fox {{ 'small' if game.size == 15 }}">🦊</div>
+                  <div class="cell fox {{ 'small' if game.size == 15 }}">
+                    <span class="fox-art" aria-hidden="true">🦊</span>
+                    <span class="fox-bearing">{{ game.revealed[key] }}</span>
+                  </div>
                 {% else %}
                   <div class="cell number {{ 'grey-line' if zl }} {{ 'small' if game.size == 15 }}">{{ game.revealed[key] }}</div>
                 {% endif %}
@@ -234,15 +262,32 @@
   {% else %}
     <!-- ================= КОНЕЦ ИГРЫ ================= -->
     <div class="message {{ game.status }}">{{ game.message }}</div>
-    <p class="hint">Поле очищено. Можно начать новую игру.</p>
+
+    {# Раскрытое поле: видны все лисы (с пеленгом) и пеленг каждой клетки #}
+    {% if final_board %}
+    <table class="board">
+      {% for row in final_board %}
+        <tr>
+          {% for cell in row %}
+            <td>
+              {% if cell.fox %}
+                <div class="cell fox {{ 'small' if game.size == 15 }}">
+                  <span class="fox-art" aria-hidden="true">🦊</span>
+                  <span class="fox-bearing">{{ cell.bearing }}</span>
+                </div>
+              {% else %}
+                <div class="cell number {{ 'small' if game.size == 15 }}">{{ cell.bearing }}</div>
+              {% endif %}
+            </td>
+          {% endfor %}
+        </tr>
+      {% endfor %}
+    </table>
+    {% endif %}
+
     <div class="btn-row">
-      {% if has_save %}
-      <form method="post" action="{{ url_for('load_game') }}" style="display:inline">
-        <button type="submit">📂 Загрузить сохранённую игру</button>
-      </form>
-      {% endif %}
       <form method="post" action="{{ url_for('exit') }}" style="display:inline">
-        <button type="submit">В начало</button>
+        <button type="submit">Закончить</button>
       </form>
     </div>
   {% endif %}

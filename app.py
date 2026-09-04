@@ -264,6 +264,38 @@ def _save_game(game):
     }
 
 
+def _bearing(game, row, col):
+    """Пеленг клетки: сколько лис стоит на её вертикали, горизонтали и обеих
+    диагоналях. Лиса в самой клетке тоже учитывается (она на своей вертикали
+    и горизонтали) — как и было в ходовой логике."""
+    count = 0
+    for fr, fc in game["foxes"]:
+        if fr == row or fc == col or fr - fc == row - col or fr + fc == row + col:
+            count += 1
+    return count
+
+
+def _final_board(game):
+    """Полное раскрытие поля для экрана окончания игры (победа/поражение).
+
+    Возвращает строки клеток {fox: bool, bearing: int}: для каждой клетки —
+    есть ли в ней лиса и её пеленг (показываем решение целиком).
+    """
+    size = game["size"]
+    rows = []
+    for r in range(size):
+        cells = []
+        for c in range(size):
+            cells.append(
+                {
+                    "fox": (r, c) in game["foxes"],
+                    "bearing": _bearing(game, r, c),
+                }
+            )
+        rows.append(cells)
+    return rows
+
+
 def _compute_grey_lines(game):
     """Собирает линии открытых нулевых клеток для серой подсветки.
 
@@ -294,6 +326,9 @@ def index():
         return render_template("welcome.html")
     game = _load_game()
     grey_lines = _compute_grey_lines(game) if game else None
+    final_board = None
+    if game and game["status"] in ("win", "lose"):
+        final_board = _final_board(game)  # раскрытое поле на экране окончания
     return render_template(
         "index.html",
         field_sizes=FIELD_SIZES,
@@ -301,6 +336,7 @@ def index():
         max_moves=MAX_MOVES,
         game=game,
         grey_lines=grey_lines,
+        final_board=final_board,
         username=session.get("username"),
         has_save=_has_save(session["user_id"]),
     )
@@ -442,15 +478,10 @@ def move():
         return redirect(url_for("index"))
 
     # --- Подсчёт Пеленга выбранной клетки ---
-    # Лиса учитывается, если она на той же:
-    #   горизонтали (fr == row), вертикали (fc == col),
-    #   диагонали "\" (fr - fc == row - col) или диагонали "/" (fr + fc == row + col).
-    # Лиса в самой выбранной клетке тоже попадает на её вертикаль/горизонталь,
-    # поэтому учитывается в пеленге (легко исключить, добавив and (fr, fc) != (row, col)).
-    bearing = 0
-    for fr, fc in game["foxes"]:
-        if fr == row or fc == col or fr - fc == row - col or fr + fc == row + col:
-            bearing += 1
+    # Лиса учитывается, если она на той же горизонтали, вертикали или одной
+    # из диагоналей. Лиса в самой клетке тоже попадает на её вертикаль и
+    # горизонталь, поэтому учитывается в пеленге.
+    bearing = _bearing(game, row, col)
 
     # Открываем клетку и записываем пеленг
     game["revealed"][key] = bearing

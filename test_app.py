@@ -342,6 +342,59 @@ def test_save_requires_active_game():
     assert "Сохранять можно только идущую" in client.get("/").get_data(as_text=True)
 
 
+def test_fox_cell_shows_bearing():
+    """Клетка с найденной лисой показывает лису (фон) и пеленг поверх."""
+    client = _auth_client("ulrich")
+    foxes = [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)]
+    with patch("app.random.sample", return_value=foxes):
+        client.post("/start", data={"size": "8", "foxes": "5"})
+    client.post("/move", data={"row": "0", "col": "0"})  # лиса на строке 0: пеленг 5
+    body = client.get("/").get_data(as_text=True)
+    assert "fox-art" in body        # лиса как фон клетки
+    assert 'fox-bearing">5<' in body  # цифра пеленга поверх лисы
+
+
+def test_win_screen_shows_full_field_and_finish():
+    """После победы: сообщение над раскрытым полем и кнопка «Закончить»."""
+    client = _auth_client("vera")
+    foxes = [(0, 0), (0, 1)]
+    with patch("app.random.sample", return_value=foxes):
+        client.post("/start", data={"size": "8", "foxes": "2"})
+    client.post("/move", data={"row": "0", "col": "0"})
+    client.post("/move", data={"row": "0", "col": "1"})
+    body = client.get("/").get_data(as_text=True)
+    # сообщение об окончании игры над полем
+    assert "Поздравляем" in body
+    assert 'class="message win"' in body
+    # поле раскрыто: закрытых клеток нет, каждая лиса показана с пеленгом
+    assert 'class="cell hidden' not in body
+    assert body.count('class="cell fox') == 2
+    assert 'fox-art' in body
+    # кнопка «Закончить» возвращает в исходное меню выбора параметров
+    resp = client.post("/exit")
+    assert resp.status_code == 302
+    menu = client.get("/").get_data(as_text=True)
+    assert "Новая игра" in menu
+    assert 'class="cell hidden' not in menu
+
+
+def test_lose_screen_reveals_field():
+    """После поражения поле тоже раскрыто: не найденная лиса видна."""
+    client = _auth_client("walt")
+    foxes = [(0, 0)]
+    with patch("app.random.sample", return_value=foxes):
+        client.post("/start", data={"size": "8", "foxes": "1"})
+    # ход в пустую клетку при лимите в 1 ход завершает игру поражением
+    with patch("app.MAX_MOVES", 1):
+        client.post("/move", data={"row": "7", "col": "7"})
+    body = client.get("/").get_data(as_text=True)
+    assert "Лимит ходов" in body
+    assert 'class="message lose"' in body
+    # лиса, которую не успели найти, теперь видна на раскрытом поле
+    assert 'fox-art' in body
+    assert 'class="cell hidden' not in body
+
+
 def main():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]
