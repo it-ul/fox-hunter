@@ -261,6 +261,87 @@ def test_exit_game():
     assert "Новая игра" in body
 
 
+def test_save_and_load_roundtrip():
+    """Сохранив игру, можно начать новую и вернуться к сохранённой."""
+    client = _auth_client("olga")
+    foxes = [(0, 0), (0, 1)]
+    with patch("app.random.sample", return_value=foxes):
+        client.post("/start", data={"size": "8", "foxes": "2"})
+    client.post("/move", data={"row": "0", "col": "0"})  # лиса найдена, ход 1
+    resp = client.post("/save")
+    assert resp.status_code == 302
+    assert "Игра сохранена" in client.get("/").get_data(as_text=True)
+
+    # Начинаем новую игру — старое состояние ушло
+    client.post("/exit")
+    with patch("app.random.sample", return_value=[(3, 3), (4, 4)]):
+        client.post("/start", data={"size": "8", "foxes": "2"})
+    body = client.get("/").get_data(as_text=True)
+    assert "Ходы: 0 / 100" in body
+
+    # Загружаем сохранение — состояние вернулось (1 ход, 1 лиса)
+    client.post("/load")
+    body = client.get("/").get_data(as_text=True)
+    assert "Игра загружена" in body
+    assert "Ходы: 1 / 100" in body
+    assert "Лисы найдены: 1 / 2" in body
+
+    # Из загруженной игры можно продолжать ходить
+    with patch("app.random.sample"):
+        client.post("/move", data={"row": "0", "col": "1"})
+    body = client.get("/").get_data(as_text=True)
+    assert "Поздравляем" in body
+    assert "Все 2 лис найдены за 2 ходов" in body
+
+
+def test_save_is_one_slot_per_player():
+    """Повторное сохранение обновляет слот, а не плодит записи."""
+    client = _auth_client("peter")
+    foxes = [(0, 0)]
+    with patch("app.random.sample", return_value=foxes):
+        client.post("/start", data={"size": "8", "foxes": "1"})
+    client.post("/save")
+    client.post("/move", data={"row": "1", "col": "1"})
+    client.post("/save")
+    conn = sqlite3.connect(app_module.app.config["DATABASE"])
+    try:
+        count = conn.execute(
+            "SELECT COUNT(*) FROM saves WHERE user_id = "
+            "(SELECT id FROM users WHERE username = 'peter')"
+        ).fetchone()[0]
+    finally:
+        conn.close()
+    assert count == 1  # один слот на игрока, вторая запись обновила первую
+
+
+def test_saves_isolated_between_players():
+    """Сохранение одного игрока не видно другому."""
+    alice = _auth_client("rose")
+    foxes = [(0, 0)]
+    with patch("app.random.sample", return_value=foxes):
+        alice.post("/start", data={"size": "8", "foxes": "1"})
+    alice.post("/save")
+
+    bob = _auth_client("sam")
+    body = bob.get("/").get_data(as_text=True)
+    assert "Продолжить сохранённую игру" not in body  # у bob нет сохранения
+    bob.post("/load")
+    assert "нет сохранённой игры" in bob.get("/").get_data(as_text=True)
+
+    # у alice сохранение на месте: выходим в меню — там кнопка продолжения
+    alice.post("/exit")
+    body = alice.get("/").get_data(as_text=True)
+    assert "Продолжить сохранённую игру" in body
+
+
+def test_save_requires_active_game():
+    """Без идущей игры сохранить нельзя."""
+    client = _auth_client("tom")
+    resp = client.post("/save")
+    assert resp.status_code == 302
+    assert "Сохранять можно только идущую" in client.get("/").get_data(as_text=True)
+
+
 def main():
     tests = [v for k, v in sorted(globals().items())
              if k.startswith("test_") and callable(v)]

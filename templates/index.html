@@ -96,6 +96,10 @@
     .message.win { background: #2f9e44; color: #fff; }
     .message.lose { background: #c92a2a; color: #fff; }
     .btn-row { margin: 10px; }
+
+    .flash { padding: 10px 14px; border-radius: 10px; font-size: 14px; margin: 10px auto; max-width: 560px; }
+    .flash.error { background: #c92a2a; color: #fff; }
+    .flash.ok { background: #2f9e44; color: #fff; }
   </style>
 </head>
 <body>
@@ -109,6 +113,14 @@
     </form>
   </div>
   {% endif %}
+
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
 
   {% if game is none %}
     <!-- ================= СТАРТОВОЕ МЕНЮ ================= -->
@@ -128,6 +140,11 @@
         <p class="hint">Лимит ходов: {{ max_moves }}. Чем больше лис — тем сложнее игра.</p>
         <button type="submit">Начать игру</button>
       </form>
+      {% if has_save %}
+        <form method="post" action="{{ url_for('load_game') }}">
+          <button type="submit">📂 Продолжить сохранённую игру</button>
+        </form>
+      {% endif %}
     </div>
 
     <div class="card rules">
@@ -201,6 +218,14 @@
     </table>
 
     <div class="btn-row">
+      <form method="post" action="{{ url_for('save_game') }}" style="display:inline">
+        <button type="submit">💾 Сохранить игру</button>
+      </form>
+      {% if has_save %}
+      <form method="post" action="{{ url_for('load_game') }}" style="display:inline">
+        <button type="submit">📂 Загрузить</button>
+      </form>
+      {% endif %}
       <form method="post" action="{{ url_for('exit') }}" style="display:inline">
         <button type="submit">Выход</button>
       </form>
@@ -211,6 +236,11 @@
     <div class="message {{ game.status }}">{{ game.message }}</div>
     <p class="hint">Поле очищено. Можно начать новую игру.</p>
     <div class="btn-row">
+      {% if has_save %}
+      <form method="post" action="{{ url_for('load_game') }}" style="display:inline">
+        <button type="submit">📂 Загрузить сохранённую игру</button>
+      </form>
+      {% endif %}
       <form method="post" action="{{ url_for('exit') }}" style="display:inline">
         <button type="submit">В начало</button>
       </form>

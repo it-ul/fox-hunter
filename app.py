@@ -19,6 +19,7 @@
     → открыть http://127.0.0.1:5000
 """
 
+import json
 import os
 import random
 import sqlite3
@@ -53,7 +54,7 @@ def _db_path():
 
 
 def init_db(force=False):
-    """Создаёт таблицу пользователей. force=True — пересоздать с нуля."""
+    """Создаёт таблицы пользователей и сохранений. force=True — пересоздать."""
     path = _db_path()
     if force and os.path.exists(path):
         os.remove(path)
@@ -65,6 +66,23 @@ def init_db(force=False):
             username TEXT NOT NULL UNIQUE COLLATE NOCASE,
             password_hash TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    # Сохранения игр: один слот на игрока (user_id — первичный ключ)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS saves (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id),
+            size INTEGER NOT NULL,
+            foxes TEXT NOT NULL,
+            moves INTEGER NOT NULL,
+            found INTEGER NOT NULL,
+            revealed TEXT NOT NULL,
+            found_cells TEXT NOT NULL,
+            status TEXT NOT NULL,
+            message TEXT,
+            saved_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
         """
     )
@@ -107,6 +125,81 @@ def _create_user(username, password_hash):
         conn.close()
 
 
+# --- Сохранения игр (один слот на игрока) --------------------------------
+
+def _save_game_to_db(user_id, game):
+    """Сохраняет игру игрока в БД (обновляет слот, если он уже есть)."""
+    conn = _db()
+    try:
+        conn.execute(
+            """
+            INSERT INTO saves
+                (user_id, size, foxes, moves, found, revealed, found_cells,
+                 status, message, saved_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+            ON CONFLICT(user_id) DO UPDATE SET
+                size = excluded.size,
+                foxes = excluded.foxes,
+                moves = excluded.moves,
+                found = excluded.found,
+                revealed = excluded.revealed,
+                found_cells = excluded.found_cells,
+                status = excluded.status,
+                message = excluded.message,
+                saved_at = datetime('now')
+            """,
+            (
+                user_id,
+                game["size"],
+                json.dumps(game["foxes"]),  # [(r, c), ...] -> [[r, c], ...]
+                game["moves"],
+                game["found"],
+                json.dumps(game["revealed"]),  # {"r,c": пеленг}
+                json.dumps(list(game["found_cells"])),  # set -> список строк
+                game["status"],
+                game["message"],
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _load_game_from_db(user_id):
+    """Читает сохранение игрока из БД (в удобном для _load_game виде)."""
+    conn = _db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM saves WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        return None
+    return {
+        "size": row["size"],
+        "foxes": [tuple(f) for f in json.loads(row["foxes"])],
+        "moves": row["moves"],
+        "found": row["found"],
+        "revealed": json.loads(row["revealed"]),
+        "found_cells": set(json.loads(row["found_cells"])),
+        "status": row["status"],
+        "message": row["message"],
+    }
+
+
+def _has_save(user_id):
+    """Есть ли у игрока сохранённая игра."""
+    conn = _db()
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM saves WHERE user_id = ?", (user_id,)
+        ).fetchone()
+    finally:
+        conn.close()
+    return row is not None
+
+
 def login_required(view):
     """Защищает маршрут: доступен только вошедшему игроку."""
 
@@ -139,15 +232,22 @@ def _key(r, c):
 def _load_game():
     """Достаёт игру из сессии и приводит данные к удобному виду.
 
-    В JSON кортежи превращаются в списки, а множества не поддерживаются,
-    поэтому здесь мы это «чиним» после чтения из сессии.
+    ВАЖНО: возвращает копию, а не сам объект из сессии — иначе мутации
+    (кортежи/множества) «протекают» в сессию и ломают её сериализацию.
     """
     game = session.get("game")
     if not game:
         return None
-    game["foxes"] = [tuple(f) for f in game["foxes"]]  # [[r, c], ...] -> [(r, c), ...]
-    game["found_cells"] = set(game["found_cells"])  # список строк -> множество
-    return game
+    return {
+        "size": game["size"],
+        "foxes": [tuple(f) for f in game["foxes"]],  # [[r, c], ...] -> [(r, c), ...]
+        "moves": game["moves"],
+        "found": game["found"],
+        "revealed": dict(game["revealed"]),  # копия словаря
+        "found_cells": set(game["found_cells"]),  # список строк -> множество
+        "status": game["status"],
+        "message": game["message"],
+    }
 
 
 def _save_game(game):
@@ -202,6 +302,7 @@ def index():
         game=game,
         grey_lines=grey_lines,
         username=session.get("username"),
+        has_save=_has_save(session["user_id"]),
     )
 
 
@@ -253,6 +354,32 @@ def logout():
     session.pop("user_id", None)
     session.pop("username", None)
     session.pop("game", None)
+    return redirect(url_for("index"))
+
+
+@app.route("/save", methods=["POST"])
+@login_required
+def save_game():
+    """Сохраняет текущую игру игрока в его слот."""
+    game = _load_game()
+    if game and game["status"] == "playing":
+        _save_game_to_db(session["user_id"], game)
+        flash("Игра сохранена.", "ok")
+    else:
+        flash("Сохранять можно только идущую игру.", "error")
+    return redirect(url_for("index"))
+
+
+@app.route("/load", methods=["POST"])
+@login_required
+def load_game():
+    """Загружает сохранённую игру игрока и продолжает с того же места."""
+    saved = _load_game_from_db(session["user_id"])
+    if saved:
+        _save_game(saved)  # кладём игру в сессию (с JSON-совместимым видом)
+        flash("Игра загружена. Продолжайте!", "ok")
+    else:
+        flash("У вас пока нет сохранённой игры.", "error")
     return redirect(url_for("index"))
 
 
