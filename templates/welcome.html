@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>Добро пожаловать!</h2>
+  <p class="hint">Играть могут только зарегистрированные игроки.</p>
+  <p>
+    <a href="{{ url_for('register') }}"><button>Регистрация</button></a>
+    <a href="{{ url_for('login') }}"><button class="secondary">Вход</button></a>
+  </p>
+</div>
+<div class="card" style="text-align:left">
+  <h3>Правила</h3>
+  <ul class="hint">
+    <li>Лисы спрятаны на поле. Кликайте по клеткам, чтобы найти их.</li>
+    <li>В открытой клетке показывается <b>пеленг</b> — сколько лис стоит на той же
+        вертикали, горизонтали и обеих диагоналях.</li>
+    <li>Попадание в клетку с лисой отмечает её как найденную.</li>
+    <li>На игру даётся 100 ходов.</li>
+  </ul>
+</div>
+{% endblock %}

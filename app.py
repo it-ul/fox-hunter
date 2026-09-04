@@ -21,13 +21,103 @@
 
 import os
 import random
+import sqlite3
+from functools import wraps
 
-from flask import Flask, redirect, render_template, request, session, url_for
+from flask import (
+    Flask,
+    flash,
+    redirect,
+    render_template,
+    request,
+    session,
+    url_for,
+)
+from werkzeug.security import check_password_hash, generate_password_hash
 
 app = Flask(__name__)
-# Секретный ключ нужен для сессии (состояния игры).
+# Секретный ключ нужен для сессии (состояния игры и авторизации).
 # В проде задаётся переменной окружения SECRET_KEY.
 app.secret_key = os.environ.get("SECRET_KEY", "fox-hunter-secret-key")
+
+# --- База данных пользователей (SQLite) ---------------------------------
+
+DB_FILENAME = "users.db"
+
+
+def _db_path():
+    """Путь к файлу БД: из конфига Flask (для тестов) или рядом с app.py."""
+    return app.config.get("DATABASE") or os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), DB_FILENAME
+    )
+
+
+def init_db(force=False):
+    """Создаёт таблицу пользователей. force=True — пересоздать с нуля."""
+    path = _db_path()
+    if force and os.path.exists(path):
+        os.remove(path)
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS users (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            username TEXT NOT NULL UNIQUE COLLATE NOCASE,
+            password_hash TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+init_db()  # гарантируем наличие БД при старте
+
+
+def _db():
+    conn = sqlite3.connect(_db_path())
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def _user_by_username(username):
+    """Ищет пользователя по логину (без учёта регистра)."""
+    conn = _db()
+    try:
+        row = conn.execute(
+            "SELECT * FROM users WHERE username = ? COLLATE NOCASE",
+            (username,),
+        ).fetchone()
+        return dict(row) if row else None
+    finally:
+        conn.close()
+
+
+def _create_user(username, password_hash):
+    """Добавляет пользователя. Кидает sqlite3.IntegrityError, если логин занят."""
+    conn = _db()
+    try:
+        conn.execute(
+            "INSERT INTO users (username, password_hash) VALUES (?, ?)",
+            (username, password_hash),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def login_required(view):
+    """Защищает маршрут: доступен только вошедшему игроку."""
+
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        if "user_id" not in session:
+            return redirect(url_for("login"))
+        return view(*args, **kwargs)
+
+    return wrapped
+
 
 # Доступные размеры поля
 FIELD_SIZES = [8, 9, 10, 15]
@@ -99,7 +189,9 @@ def _compute_grey_lines(game):
 
 @app.route("/")
 def index():
-    """Главная страница: меню новой игры (если игры нет) или поле."""
+    """Главная: для гостя — вход/регистрация, для игрока — меню игры или поле."""
+    if "user_id" not in session:
+        return render_template("welcome.html")
     game = _load_game()
     grey_lines = _compute_grey_lines(game) if game else None
     return render_template(
@@ -109,10 +201,63 @@ def index():
         max_moves=MAX_MOVES,
         game=game,
         grey_lines=grey_lines,
+        username=session.get("username"),
     )
 
 
+@app.route("/register", methods=["GET", "POST"])
+def register():
+    """Регистрация игрока: уникальный логин + пароль (хранится хэшем)."""
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+        error = None
+        if len(username) < 3 or len(username) > 30:
+            error = "Логин должен быть от 3 до 30 символов."
+        elif len(password) < 6:
+            error = "Пароль должен быть не короче 6 символов."
+        elif _user_by_username(username):
+            error = "Этот логин уже занят. Выберите другой."
+        if error:
+            flash(error, "error")
+        else:
+            try:
+                _create_user(username, generate_password_hash(password))
+            except sqlite3.IntegrityError:
+                # защита от гонки: кто-то успел занять логин
+                flash("Этот логин уже занят. Выберите другой.", "error")
+            else:
+                flash("Регистрация прошла успешно. Теперь войдите.", "ok")
+                return redirect(url_for("login"))
+    return render_template("register.html")
+
+
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    """Вход игрока: проверка логина и пароля."""
+    if request.method == "POST":
+        username = (request.form.get("username") or "").strip()
+        password = request.form.get("password") or ""
+        user = _user_by_username(username) if username else None
+        if user and check_password_hash(user["password_hash"], password):
+            session["user_id"] = user["id"]
+            session["username"] = user["username"]
+            return redirect(url_for("index"))
+        flash("Неверный логин или пароль.", "error")
+    return render_template("login.html")
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    """Выход игрока. Сессия игры очищается (она привязана к игроку)."""
+    session.pop("user_id", None)
+    session.pop("username", None)
+    session.pop("game", None)
+    return redirect(url_for("index"))
+
+
 @app.route("/start", methods=["POST"])
+@login_required
 def start():
     """Создаёт новую игру: поле + случайная расстановка лис."""
     # Читаем параметры формы (с запасом на кривой ввод)
@@ -148,6 +293,7 @@ def start():
 
 
 @app.route("/move", methods=["POST"])
+@login_required
 def move():
     """Ход игрока: клик по клетке поля."""
     game = _load_game()
@@ -208,6 +354,7 @@ def move():
 
 
 @app.route("/exit", methods=["POST"], endpoint="exit")
+@login_required
 def exit_game():
     """Выход из текущей игры в начало."""
     session.pop("game", None)

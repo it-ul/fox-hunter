@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="card">
+  <h2>Регистрация</h2>
+  <form method="post" action="{{ url_for('register') }}">
+    <label>Логин (3–30 символов)
+      <input type="text" name="username" required minlength="3" maxlength="30" autofocus>
+    </label>
+    <label>Пароль (не менее 6 символов)
+      <input type="password" name="password" required minlength="6">
+    </label>
+    <button type="submit">Зарегистрироваться</button>
+  </form>
+  <p class="hint">Уже есть аккаунт? <a href="{{ url_for('login') }}">Войдите</a>.</p>
+</div>
+{% endblock %}

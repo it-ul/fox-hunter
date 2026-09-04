@@ -45,6 +45,24 @@
     button:hover { transform: scale(1.04); }
     .hint { font-size: 13px; opacity: .8; }
 
+    .userbar {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      font-size: 15px;
+      margin: 8px 0;
+      opacity: .95;
+    }
+    .userbar form { display: inline; margin: 0; }
+    .userbar button {
+      font-size: 13px;
+      padding: 5px 12px;
+      margin: 0;
+      background: rgba(255, 255, 255, 0.15);
+      color: #f5f0e1;
+    }
+
     .stats { font-size: 16px; margin: 12px 0; }
 
     /* Поле */
@@ -83,6 +101,14 @@
 <body>
 <div class="container">
   <h1>🦊 Охота на лис</h1>
+  {% if username %}
+  <div class="userbar">
+    <span>👤 {{ username }}</span>
+    <form method="post" action="{{ url_for('logout') }}">
+      <button type="submit">Выйти</button>
+    </form>
+  </div>
+  {% endif %}
 
   {% if game is none %}
     <!-- ================= СТАРТОВОЕ МЕНЮ ================= -->

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}🦊 Охота на лис{% endblock %}</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      background: linear-gradient(135deg, #2e5d3a, #1b3a2a);
+      color: #f5f0e1;
+      min-height: 100vh;
+    }
+    .container { max-width: 640px; margin: 0 auto; padding: 24px; text-align: center; }
+    h1 { letter-spacing: 2px; }
+    h2 { margin-top: 4px; }
+
+    .card {
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 16px;
+      padding: 24px;
+      margin: 16px auto;
+      max-width: 460px;
+    }
+    label { display: block; margin: 12px 0; font-size: 15px; text-align: left; }
+    input[type="text"], input[type="password"] {
+      width: 100%;
+      margin-top: 4px;
+      padding: 8px 10px;
+      font-size: 15px;
+      border-radius: 8px;
+      border: none;
+    }
+    button {
+      font-size: 15px;
+      padding: 9px 18px;
+      border-radius: 8px;
+      border: none;
+      margin: 6px 4px;
+      background: #e8a33d;
+      color: #3a2a0a;
+      font-weight: 600;
+      cursor: pointer;
+      transition: transform .1s;
+    }
+    button:hover { transform: scale(1.04); }
+    button.secondary { background: rgba(255, 255, 255, 0.15); color: #f5f0e1; }
+    .hint { font-size: 13px; opacity: .8; }
+
+    .flash {
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 14px;
+      margin: 10px auto;
+      max-width: 460px;
+    }
+    .flash.error { background: #c92a2a; color: #fff; }
+    .flash.ok { background: #2f9e44; color: #fff; }
+
+    .userbar {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 12px;
+      font-size: 15px;
+      margin: 8px 0;
+      opacity: .95;
+    }
+    .userbar form { display: inline; margin: 0; }
+    .userbar button {
+      font-size: 13px;
+      padding: 5px 12px;
+      margin: 0;
+      background: rgba(255, 255, 255, 0.15);
+      color: #f5f0e1;
+    }
+  </style>
+</head>
+<body>
+<div class="container">
+  <h1>🦊 Охота на лис</h1>
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      {% for category, message in messages %}
+        <div class="flash {{ category }}">{{ message }}</div>
+      {% endfor %}
+    {% endif %}
+  {% endwith %}
+  {% block content %}{% endblock %}
+</div>
+</body>
+</html>

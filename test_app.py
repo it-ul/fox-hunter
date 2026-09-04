@@ -1,22 +1,166 @@
 # -*- coding: utf-8 -*-
-"""Проверка работоспособности «Охота на лис» через Flask test client.
+"""Проверка «Охота на лис» через Flask test client.
+
+Покрытие:
+- Авторизация: регистрация (уникальность логина, валидация, хэш пароля),
+  вход, выход, доступ к игре только после входа.
+- Игра: меню, старт, пеленг, серые линии, победа, валидация ввода.
 
 Запуск: python test_app.py
 Выход: 0 — всё зелёное, 1 — есть падения.
 """
 
+import os
+import sqlite3
 import sys
+import tempfile
 from unittest.mock import patch
+
+from werkzeug.security import check_password_hash
 
 import app as app_module
 
+# --- Тестовая БД: временный файл, отдельный от настоящей users.db ---------
+_tmp = tempfile.mkdtemp(prefix="foxhunter_tests_")
+app_module.app.config["DATABASE"] = os.path.join(_tmp, "test_users.db")
+app_module.init_db(force=True)
+
+
+def _register(client, username, password):
+    """Регистрирует пользователя через форму."""
+    return client.post("/register", data={"username": username, "password": password})
+
+
+def _login(client, username, password):
+    """Входит под пользователем."""
+    return client.post("/login", data={"username": username, "password": password})
+
+
+def _auth_client(username, password="secret123"):
+    """Возвращает клиент с зарегистрированным и вошедшим игроком."""
+    client = app_module.app.test_client()
+    _register(client, username, password)
+    resp = _login(client, username, password)
+    assert resp.status_code == 302, "login должен редиректить на /"
+    return client
+
+
+# --- Авторизация ----------------------------------------------------------
+
+def test_guest_sees_welcome():
+    """Гость видит приветствие с входом/регистрацией, но не игру."""
+    client = app_module.app.test_client()
+    body = client.get("/").get_data(as_text=True)
+    assert "Регистрация" in body
+    assert "Вход" in body
+    assert "Новая игра" not in body  # меню игры гостю не показываем
+
+
+def test_register_success_and_login():
+    """Регистрация создаёт игрока, после входа открывается меню игры."""
+    client = app_module.app.test_client()
+    resp = _register(client, "alice", "secret123")
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+    resp = _login(client, "alice", "secret123")
+    assert resp.status_code == 302
+    body = client.get("/").get_data(as_text=True)
+    assert "Новая игра" in body
+    assert "alice" in body  # имя игрока на странице
+
+
+def test_register_duplicate_username():
+    """Повторная регистрация с тем же логином отклоняется."""
+    client = app_module.app.test_client()
+    _register(client, "bob", "secret123")
+    resp = _register(client, "bob", "other456")
+    assert resp.status_code == 200  # форма с ошибкой, без редиректа
+    body = resp.get_data(as_text=True)
+    assert "уже занят" in body
+
+
+def test_register_case_insensitive():
+    """Логины не различают регистр: 'Carol' и 'carol' — одно и то же имя."""
+    client = app_module.app.test_client()
+    _register(client, "Carol", "secret123")
+    resp = _register(client, "carol", "secret123")
+    assert resp.status_code == 200
+    assert "уже занят" in resp.get_data(as_text=True)
+
+
+def test_register_validation():
+    """Короткий логин и короткий пароль отклоняются с сообщением."""
+    client = app_module.app.test_client()
+    resp = _register(client, "ab", "secret123")
+    assert "Логин должен быть" in resp.get_data(as_text=True)
+    resp = _register(client, "validname", "123")
+    assert "Пароль должен быть" in resp.get_data(as_text=True)
+
+
+def test_login_wrong_password():
+    """Неверный пароль не пускает в игру."""
+    client = app_module.app.test_client()
+    _register(client, "dave", "secret123")
+    resp = _login(client, "dave", "wrong999")
+    assert resp.status_code == 200
+    assert "Неверный логин или пароль" in resp.get_data(as_text=True)
+    body = client.get("/").get_data(as_text=True)
+    assert "Новая игра" not in body
+
+
+def test_login_unknown_user():
+    """Несуществующий логин отклоняется."""
+    client = app_module.app.test_client()
+    resp = _login(client, "nobody", "secret123")
+    assert resp.status_code == 200
+    assert "Неверный логин или пароль" in resp.get_data(as_text=True)
+
+
+def test_password_stored_hashed():
+    """Пароль в БД хранится хэшем, а не открытым текстом."""
+    client = app_module.app.test_client()
+    _register(client, "erin", "secret123")
+    conn = sqlite3.connect(app_module.app.config["DATABASE"])
+    try:
+        row = conn.execute(
+            "SELECT password_hash FROM users WHERE username = ?", ("erin",)
+        ).fetchone()
+    finally:
+        conn.close()
+    assert row is not None
+    stored = row[0]
+    assert stored != "secret123"  # не открытый текст
+    assert check_password_hash(stored, "secret123")  # но проверяется верно
+    assert not check_password_hash(stored, "wrong999")
+
+
+def test_game_requires_login():
+    """Запуск игры без входа уводит на страницу входа."""
+    client = app_module.app.test_client()
+    resp = client.post("/start", data={"size": "9", "foxes": "5"})
+    assert resp.status_code == 302
+    assert "/login" in resp.headers["Location"]
+    resp = client.post("/move", data={"row": "0", "col": "0"})
+    assert "/login" in resp.headers["Location"]
+
+
+def test_logout_returns_to_welcome():
+    """После выхода игра очищается, гость снова видит приветствие."""
+    client = _auth_client("frank")
+    client.post("/start", data={"size": "8", "foxes": "5"})
+    resp = client.post("/logout")
+    assert resp.status_code == 302
+    body = client.get("/").get_data(as_text=True)
+    assert "Регистрация" in body
+    assert "Новая игра" not in body
+
+
+# --- Игра (только после входа) -------------------------------------------
 
 def test_index_menu():
-    """Главная страница отдаёт стартовое меню."""
-    client = app_module.app.test_client()
-    resp = client.get("/")
-    assert resp.status_code == 200
-    body = resp.get_data(as_text=True)
+    """Авторизованный игрок видит меню новой игры."""
+    client = _auth_client("grace")
+    body = client.get("/").get_data(as_text=True)
     assert "Охота на лис" in body
     assert "Новая игра" in body
     assert "Размер поля" in body
@@ -24,7 +168,7 @@ def test_index_menu():
 
 def test_start_game():
     """Старт создаёт игру 9x9 и рисует поле."""
-    client = app_module.app.test_client()
+    client = _auth_client("heidi")
     resp = client.post("/start", data={"size": "9", "foxes": "5"})
     assert resp.status_code == 302  # редирект на /
     body = client.get("/").get_data(as_text=True)
@@ -36,7 +180,7 @@ def test_start_game():
 
 def test_bearing_logic():
     """Пеленг считается по вертикали/горизонтали/диагоналям, лисы помечаются."""
-    client = app_module.app.test_client()
+    client = _auth_client("ivan")
     # Подменяем случайную расстановку: 5 лис в первой строке
     foxes = [(0, 0), (0, 1), (0, 2), (0, 3), (0, 4)]
     with patch("app.random.sample", return_value=foxes):
@@ -69,7 +213,7 @@ def test_bearing_logic():
 
 def test_win_condition():
     """Поиск всех лис завершает игру победой."""
-    client = app_module.app.test_client()
+    client = _auth_client("judy")
     foxes = [(0, 0), (0, 1)]
     with patch("app.random.sample", return_value=foxes):
         client.post("/start", data={"size": "8", "foxes": "2"})
@@ -83,7 +227,7 @@ def test_win_condition():
 
 def test_invalid_move_ignored():
     """Ход за пределы поля не меняет состояние игры."""
-    client = app_module.app.test_client()
+    client = _auth_client("ken")
     client.post("/start", data={"size": "8", "foxes": "5"})
     client.post("/move", data={"row": "99", "col": "99"})
     body = client.get("/").get_data(as_text=True)
@@ -92,7 +236,7 @@ def test_invalid_move_ignored():
 
 def test_size_clamp():
     """Некорректный размер поля приводится к 9."""
-    client = app_module.app.test_client()
+    client = _auth_client("laura")
     client.post("/start", data={"size": "999", "foxes": "5"})
     body = client.get("/").get_data(as_text=True)
     assert body.count('class="cell hidden') == 81
@@ -100,7 +244,7 @@ def test_size_clamp():
 
 def test_size_15():
     """Поле 15x15 доступно и использует мелкие клетки."""
-    client = app_module.app.test_client()
+    client = _auth_client("mike")
     resp = client.post("/start", data={"size": "15", "foxes": "10"})
     assert resp.status_code == 302
     body = client.get("/").get_data(as_text=True)
@@ -110,7 +254,7 @@ def test_size_15():
 
 def test_exit_game():
     """Выход возвращает в стартовое меню."""
-    client = app_module.app.test_client()
+    client = _auth_client("nina")
     client.post("/start", data={"size": "8", "foxes": "5"})
     client.post("/exit")
     body = client.get("/").get_data(as_text=True)
